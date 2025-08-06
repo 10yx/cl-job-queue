@@ -9,3 +9,8 @@
                             (:file "queue" :depends-on ("package"))
                             (:file "worker" :depends-on ("queue"))
                             (:file "scheduler" :depends-on ("worker"))))))
+
+(asdf:defsystem "cl-job-queue/test"
+ :depends-on ("cl-job-queue" "fiveam")
+ :components ((:module "test"
+               :components ((:file "cl-job-queue-test")))))

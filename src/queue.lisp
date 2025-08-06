@@ -21,6 +21,14 @@
    (setf (queue-error-handler queue) error-handler))
   queue))
 
+(defmethod set-processor ((queue job-queue) fn)
+ "Set the function to be used for processing jobs."
+ (setf (queue-processor queue) fn))
+
+(defmethod set-error-handler ((queue job-queue) fn)
+ "Set the function to be used for handling errors."
+ (setf (queue-error-handler queue) fn))
+
 (defmethod enqueue ((queue job-queue) task)
  "Add a task to the queue in a thread-safe manner."
  (bt:with-lock-held ((slot-value queue 'lock))
@@ -37,3 +45,13 @@
              (pop (queue-items queue)))))
    (bt:condition-wait (slot-value queue 'condition)
     (slot-value queue 'lock)))))
+
+(defmethod queue-size ((queue job-queue))
+ "Return the number of jobs in the queue."
+ (bt:with-lock-held ((slot-value queue 'lock))
+  (length (queue-items queue))))
+
+(defmethod clear-queue ((queue job-queue))
+ "Remove all jobs from the queue."
+ (bt:with-lock-held ((slot-value queue 'lock))
+  (setf (queue-items queue) nil)))

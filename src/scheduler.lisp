@@ -17,4 +17,4 @@
 (defmethod stop-batch-scheduler ((queue job-queue))
  "Stop the batch scheduler thread."
  (when (batch-scheduler queue)
-  (setf (batch-scheduler queue) nil))
+  (setf (batch-scheduler queue) nil)))
