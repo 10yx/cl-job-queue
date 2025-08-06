@@ -1,9 +1,10 @@
+;;; package.lisp
 (defpackage #:cl-job-queue
  (:use #:cl)
- (:local-nicknames
-  (:bt :bordeaux-threads)
-  (:log :logur))
  (:export
+  ;; Class
+  #:job-queue
+
   ;; Queue Management
   #:make-job-queue
   #:enqueue
@@ -19,8 +20,8 @@
   ;; Batch Scheduling
   #:start-batch-scheduler
   #:stop-batch-scheduler
-  #:set-batch-interval
 
   ;; Configuration
   #:set-processor
-  #:set-error-handler))
+  #:set-batch-interval
+  #:set-logger))

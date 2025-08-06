@@ -6,9 +6,7 @@
               "logur")
  :components ((:module "src"
                :components ((:file "package")
-                            (:file "queue" :depends-on ("package"))
-                            (:file "worker" :depends-on ("queue"))
-                            (:file "scheduler" :depends-on ("worker"))))))
+                            (:file "queue" :depends-on ("package"))))))
 
 (asdf:defsystem "cl-job-queue/test"
  :depends-on ("cl-job-queue" "fiveam")
