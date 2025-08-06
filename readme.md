@@ -1,223 +1,224 @@
+```markdown
 # cl-job-queue
 
-A thread-safe job queue implementation for Common Lisp, designed to process tasks asynchronously using worker threads. It supports configurable task processing, error handling, and optional batch scheduling.
+A lightweight, thread-safe job queue implementation for Common Lisp, designed for background task processing. It supports a single worker thread that processes tasks from the queue and an optional batch scheduler for periodic operations.
 
 ## Features
 
-*   **Thread-Safe Queuing**: Tasks can be safely added to the queue from multiple threads.
-*   **Asynchronous Processing**: Tasks are processed by a dedicated worker thread, preventing blocking of the main application thread.
-*   **Configurable Processor**: Define a custom function to handle the execution of each task.
-*   **Error Handling**: Specify a function to catch and handle errors that occur during task processing.
-*   **Batch Scheduling**: An optional background scheduler can periodically trigger processing or signal the worker.
-*   **Graceful Shutdown**: The worker thread can be stopped cleanly, ensuring no tasks are lost mid-processing.
+*   **Thread-Safe Queuing:** Ensures safe concurrent access to the job queue from multiple threads.
+*   **Background Worker:** Processes tasks asynchronously in a dedicated thread.
+*   **Configurable Processor:** Allows users to define a custom function to handle each task.
+*   **Batch Scheduling:** Includes an optional scheduler that periodically signals for batch operations (e.g., flushing accumulated data).
+*   **Error Handling:** Catches errors during task processing and provides an optional logging mechanism.
+*   **Graceful Shutdown:** Supports stopping the worker thread and batch scheduler cleanly.
+*   **Configurable Logging:** Accepts a custom logger function for monitoring.
+
+## Dependencies
+
+*   **`bordeaux-threads`**: For multi-threading capabilities.
+*   **`logur`**: (Optional, but listed as a dependency) For structured logging, though the provided example logger uses standard `format`.
 
 ## Installation
 
-This library is written in Common Lisp. To use it, ensure you have the `bordeaux-threads` and `log` libraries available (typically managed via Quicklisp).
+1.  **Prerequisites:** Ensure you have a Common Lisp implementation (e.g., SBCL) and Quicklisp installed.
+2.  **Load System:** Add the project's directory to your ASDF `find-system` path or install it via Quicklisp if packaged. Then, load the system:
 
-You can load the library by:
-
-1.  **Using Quicklisp (if packaged)**:
     ```lisp
-    (ql:quickload :cl-job-queue)
-    ```
-2.  **Loading source files directly**:
-    If you have the source files (`queue.lisp`, `scheduler.lisp`, `worker.lisp`), you can load them in order:
-    ```lisp
-    (load "path/to/queue.lisp")
-    (load "path/to/scheduler.lisp")
-    (load "path/to/worker.lisp")
-    (in-package #:cl-job-queue)
+    (ql:quickload "cl-job-queue")
     ```
 
 ## Usage
 
 ### 1. Creating a Job Queue
 
-Use `make-job-queue` to create an instance. You can optionally provide a task processor and an error handler during creation.
+You can create a new job queue instance using `make-job-queue`. You can optionally provide a task processor function, a logger function, and a batch interval.
 
 ```lisp
-;; Define your task processing function
+(ql:quickload "cl-job-queue")
+(in-package #:cl-job-queue)
+
+;; Define a function to process tasks
 (defun my-task-processor (task)
-  (format t "Processing task: ~a~%" task)
-  ;; Simulate work
-  (sleep (random 2.0)))
+  (format t "Processing task: ~a~%" task))
 
-;; Define your error handling function
-(defun my-error-handler (task error)
-  (format t "ERROR: Failed to process task '~a' with error: ~a~%" task error))
+;; Define a simple logger function
+(defun my-logger (level source message &rest args)
+  (format t "[~a] [~a] ~a~%"
+          level source
+          (apply #'format nil message args)))
 
-;; Create a queue with custom processor and error handler
-(defvar *my-job-queue*
-  (cl-job-queue:make-job-queue
-   :processor #'my-task-processor
-   :error-handler #'my-error-handler))
-
-;; Create a queue with default processor (#'identity) and no error handler
-;; (defvar *default-job-queue* (cl-job-queue:make-job-queue))
+;; Create a queue with a custom processor and logger
+(defvar *my-queue*
+  (make-job-queue :processor #'my-task-processor
+                  :logger #'my-logger
+                  :batch-interval 5.0)) ; Set batch interval to 5 seconds
 ```
 
-### 2. Starting and Stopping the Worker
+### 2. Starting the Worker
 
-The worker thread is responsible for dequeuing and processing tasks.
+The worker thread is responsible for dequeuing tasks and executing them.
 
 ```lisp
-;; Start the worker thread. This also starts the batch scheduler.
-(cl-job-queue:start-worker *my-job-queue* :name "MyCustomWorker")
+;; Start the worker thread
+(start-worker *my-queue*)
 
-;; Check if the worker is running
-(cl-job-queue:worker-running-p *my-job-queue*) ; => T
-
-;; Stop the worker gracefully. This waits for the current task to finish.
-(cl-job-queue:stop-worker *my-job-queue*)
-
-;; Check status after stopping
-(cl-job-queue:worker-running-p *my-job-queue*) ; => NIL
+;; You can also provide a custom name for the worker thread
+;; (start-worker *my-queue* :name "MyCustomWorker")
 ```
+
+**Note:** Starting the worker also automatically starts the batch scheduler if it's not already running.
 
 ### 3. Enqueuing Tasks
 
 Add tasks to the queue using the `enqueue` function.
 
 ```lisp
-(cl-job-queue:enqueue *my-job-queue* "Task 1: Process user data")
-(cl-job-queue:enqueue *my-job-queue* '(:action :send-email :recipient "test@example.com"))
-(cl-job-queue:enqueue *my-job-queue* 12345)
+;; Enqueue individual tasks
+(enqueue *my-queue* "First task data")
+(enqueue *my-queue* "Second task data")
+(enqueue *my-queue* 123) ; Tasks can be any Lisp object
 ```
 
 ### 4. Batch Scheduling
 
-The batch scheduler runs in a separate thread and periodically enqueues a special `:batch-flush` task. This can be useful for triggering periodic work or ensuring the worker checks for new tasks even if the queue has been idle.
+The batch scheduler periodically enqueues a special `:batch-flush` task. Your `processor` function should be designed to handle this special task if you intend to use batching.
 
 ```lisp
-;; Start the batch scheduler (it's also started by start-worker)
-(cl-job-queue:start-batch-scheduler *my-job-queue*)
+;; Example processor that handles batch flush
+(defun my-batch-aware-processor (task)
+  (cond
+    ((eq task :batch-flush)
+     (format t "Batch flush triggered! Performing batch operation...~%"))
+    (t
+     (format t "Processing individual task: ~a~%" task))))
 
-;; Set the interval between batch signals (default is 2.0 seconds)
-;; Note: The exported function `set-batch-interval` is not implemented.
-;; Use the accessor directly:
-(setf (cl-job-queue:batch-interval *my-job-queue*) 5.0) ; Set to 5 seconds
+;; Update the queue's processor
+(set-processor *my-queue* #'my-batch-aware-processor)
 
-;; Stop the batch scheduler
-(cl-job-queue:stop-batch-scheduler *my-job-queue*)
+;; Ensure the batch interval is set (e.g., 5 seconds)
+(set-batch-interval *my-queue* 5.0)
+
+;; If the worker is already running, it will pick up the new processor.
+;; If you need to ensure the new interval is picked up, you might need to restart the worker.
+;; (stop-worker *my-queue*)
+;; (start-worker *my-queue*)
 ```
 
-### 5. Example Scenario
+### 5. Stopping the Worker
+
+Gracefully shut down the worker and batch scheduler threads.
 
 ```lisp
-(ql:quickload :cl-job-queue)
-
-(defpackage :my-app
-  (:use :cl :cl-job-queue))
-(in-package :my-app)
-
-;; Define a processor that simulates work and might fail
-(defun process-item (item)
-  (format t "[~a] Starting to process: ~a~%" (bt:thread-name (bt:current-thread)) item)
-  (sleep (random 1.5))
-  (when (string= item "Task D")
-    (error "Simulated failure for Task D"))
-  (format t "[~a] Finished processing: ~a~%" (bt:thread-name (bt:current-thread)) item))
-
-;; Define an error handler
-(defun handle-item-error (task error)
-  (format t "[~a] ERROR processing task '~a': ~a~%" (bt:thread-name (bt:current-thread)) task error))
-
-;; Create and configure the queue
-(defvar *app-job-q* (make-job-queue
-                     :processor #'process-item
-                     :error-handler #'handle-item-error))
-
-;; Start the worker
-(start-worker *app-job-q* :name "AppWorker")
-
-;; Enqueue some tasks
-(enqueue *app-job-q* "Task A")
-(enqueue *app-job-q* "Task B")
-(enqueue *app-job-q* "Task C")
-(enqueue *app-job-q* "Task D") ; This one will cause an error
-(enqueue *app-job-q* "Task E")
-
-;; Let the worker process for a few seconds
-(format t "Enqueued tasks. Waiting for processing...~%")
-(sleep 5)
-
-;; Stop the worker
-(format t "Stopping worker...~%")
-(stop-worker *app-job-q*)
-(format t "Worker stopped.~%")
+(stop-worker *my-queue*)
 ```
+
+This function ensures that any currently processing task is allowed to finish (though the worker thread itself is joined), and then stops the worker and batch scheduler threads.
+
+### 6. Configuration
+
+You can change the queue's behavior after creation:
+
+*   **Set Processor:**
+    ```lisp
+    (set-processor *my-queue* #'another-processor-function)
+    ```
+*   **Set Batch Interval:**
+    ```lisp
+    (set-batch-interval *my-queue* 10.0) ; Set interval to 10 seconds
+    ```
+*   **Set Logger:**
+    ```lisp
+    ;; Using a logger from logur (example)
+    ;; (ql:quickload "logur")
+    ;; (set-logger *my-queue* (logur:make-logger :level :info))
+
+    ;; Or using a custom lambda as shown in the creation example
+    (set-logger *my-queue* #'my-logger)
+    ```
 
 ## API Reference
 
+### Classes
+
+*   **`job-queue`**: The primary class representing the job queue. It encapsulates the queue storage, synchronization primitives, worker thread, and configuration.
+
 ### Queue Management
 
-*   `make-job-queue (&key processor error-handler)`
+*   **`make-job-queue (&key processor logger (batch-interval 2.0))`**:
     *   Creates and returns a new `job-queue` instance.
-    *   `processor`: An optional function to process tasks. Defaults to `#'identity`.
-    *   `error-handler`: An optional function to handle errors during task processing. Defaults to `nil`.
+    *   `processor`: The function to execute for each task. Defaults to `#'identity`.
+    *   `logger`: A function to handle logging messages. Defaults to `nil`.
+    *   `batch-interval`: The interval (in seconds) for the batch scheduler. Defaults to `2.0`.
 
-*   `enqueue (queue job-queue) task`
-    *   Adds `task` to the queue. This operation is thread-safe.
+*   **`enqueue (queue job-queue) task`**:
+    *   Adds `task` to the queue.
+    *   This operation is thread-safe.
 
-*   `dequeue (queue job-queue)`
+*   **`dequeue (queue job-queue)`**:
     *   Removes and returns a task from the queue.
-    *   If the queue is empty and the worker is running, this function will block until a task is available or the worker is stopped.
-    *   If the worker is stopped and the queue is empty, it returns `NIL`.
+    *   If the queue is empty, it waits for a task to be enqueued or for the worker to be stopped.
+    *   If the worker is stopped while `dequeue` is waiting, it will return `NIL`.
+    *   This operation is thread-safe.
 
-*   `queue-size (queue job-queue)`
-    *   **(Not Implemented)** This function is exported but has no implementation in the provided code. To get the queue size, you would typically access the `queue-items` slot directly (e.g., `(length (queue-items my-queue))`), but this should be done with caution regarding thread safety if the worker is active.
+*   **`queue-size (queue job-queue)`**:
+    *   **Note:** This function is exported but **not implemented** in the provided code.
 
-*   `clear-queue (queue job-queue)`
-    *   **(Not Implemented)** This function is exported but has no implementation. To clear the queue, you would typically set the `queue-items` slot to `NIL` (e.g., `(setf (queue-items my-queue) nil)`), but this should be done with caution regarding thread safety.
+*   **`clear-queue (queue job-queue)`**:
+    *   **Note:** This function is exported but **not implemented** in the provided code.
 
 ### Worker Management
 
-*   `start-worker (queue job-queue &key (name "Job Worker"))`
-    *   Starts the main worker thread responsible for processing tasks from the queue. It also automatically starts the batch scheduler.
-    *   `name`: An optional string for naming the worker thread.
+*   **`start-worker (queue job-queue &key name)`**:
+    *   Starts the background worker thread.
+    *   If `name` is provided, it sets the thread's name.
+    *   This function also automatically starts the batch scheduler thread if it's not already running.
 
-*   `stop-worker (queue job-queue)`
-    *   Gracefully stops the worker thread and the associated batch scheduler. It signals the worker to stop, wakes up any threads waiting on the condition variable, and then waits for the worker thread to terminate using `bt:join-thread`.
+*   **`stop-worker (queue job-queue)`**:
+    *   Gracefully stops the worker thread and the batch scheduler thread.
+    *   It signals the worker to stop, notifies any waiting threads, and then joins the worker thread to ensure it has terminated before returning.
 
-*   `worker-running-p (queue job-queue)`
-    *   Returns `T` if the worker thread is currently active, `NIL` otherwise. This is an accessor for the internal `running` slot.
+*   **`worker-running-p (queue job-queue)`**:
+    *   Returns `T` if the worker thread is currently running, `NIL` otherwise.
 
 ### Batch Scheduling
 
-*   `start-batch-scheduler (queue job-queue)`
-    *   Starts a separate thread that periodically signals the queue (by enqueuing a `:batch-flush` task) at the interval specified by `batch-interval`.
+*   **`start-batch-scheduler (queue job-queue)`**:
+    *   Starts the batch scheduler thread. This thread periodically enqueues a `:batch-flush` task.
 
-*   `stop-batch-scheduler (queue job-queue)`
-    *   Stops the batch scheduler thread.
+*   **`stop-batch-scheduler (queue job-queue)`**:
+    *   Stops the batch scheduler thread by signaling it to exit its loop.
 
-*   `set-batch-interval (queue job-queue) interval`
-    *   **(Exported but Not Implemented)** This function is exported but has no implementation. To change the batch interval, use the `batch-interval` accessor directly: `(setf (cl-job-queue:batch-interval my-queue) 5.0)`.
+### Configuration
 
-*   `batch-interval (queue job-queue)`
-    *   **(Accessor)** Returns the current interval (in seconds) for the batch scheduler.
+*   **`set-processor (queue job-queue) fn`**:
+    *   Sets the function `fn` that the worker thread will use to process tasks.
 
-### Configuration (Accessors)
+*   **`set-batch-interval (queue job-queue) interval`**:
+    *   Sets the interval (in seconds) at which the batch scheduler will enqueue a `:batch-flush` task.
 
-These functions are accessors to the internal slots of the `job-queue` class, allowing dynamic configuration.
-
-*   `queue-processor (queue job-queue)`
-    *   **(Accessor)** Returns the function currently used to process tasks.
-
-*   `queue-error-handler (queue job-queue)`
-    *   **(Accessor)** Returns the function currently used to handle errors during task processing.
-
-## Dependencies
-
-*   **Common Lisp**: SBCL is recommended.
-*   **`bordeaux-threads`**: For multi-threading primitives (locks, condition variables, threads).
-*   **`log`**: For logging messages (used internally by the library, e.g., for worker start/stop).
+*   **`set-logger (queue job-queue) logger-fn`**:
+    *   Sets a logging function `logger-fn`. This function is called with `(level source message &rest args)` when errors occur during task processing or when threads start/stop.
 
 ## Design Decisions & Notes
 
-*   **Thread Safety**: All core queue operations (`enqueue`, `dequeue`) are protected by a `bordeaux-threads` lock to ensure safe concurrent access.
-*   **Worker Loop**: The worker thread continuously attempts to `dequeue` tasks. If the queue is empty, it waits on a condition variable until a task is enqueued or the worker is signaled to stop.
-*   **Error Handling Strategy**: Errors occurring within the `processor` function are caught. If an `error-handler` is configured, it is invoked with the task and the error object. Otherwise, the error might propagate and potentially crash the worker thread (depending on the Lisp environment's default error handling).
-*   **Batch Scheduler Task (`:batch-flush`)**: The batch scheduler enqueues a special symbol `:batch-flush`. The worker thread will pick this up and pass it to the `processor` function. The library does not provide specific handling for this symbol; its purpose is to act as a signal or a trigger for the worker to re-evaluate the queue state after the `batch-interval` has elapsed.
-*   **Shutdown Mechanism**: `stop-worker` is designed for graceful shutdown. It sets a flag to stop the worker loop, notifies any threads waiting on the condition variable (to unblock `dequeue`), and then uses `bt:join-thread` to wait for the worker thread to complete its current operation and exit. The batch scheduler is also stopped.
-*   **Missing Implementations**: The exported symbols `queue-size`, `clear-queue`, and `set-batch-interval` do not have corresponding implementations in the provided code. The accessors `queue-processor`, `queue-error-handler`, and `batch-interval` are available and can be used to configure these aspects dynamically after queue creation.
+*   **Thread Safety:** All critical sections involving the queue's internal state (`queue-items`) are protected by a `bordeaux-threads:lock`.
+*   **Queue Type:** The implementation uses `push` to add items and `pop` to remove them from the head of a list. This makes it a **LIFO (Last-In, First-Out) stack**.
+*   **Worker Loop Behavior:** The worker thread continuously attempts to `dequeue` tasks. If the queue is empty, it waits using a `bordeaux-threads:condition-variable`. The `dequeue` operation is designed to return `NIL` if the worker is stopped while it's waiting, allowing for a clean shutdown.
+*   **Batch Flush Task:** The batch scheduler sends a special task value, `:batch-flush`. Users must explicitly handle this value within their custom processor function if they wish to perform batch operations.
+*   **Automatic Batch Scheduler Start:** The `start-worker` function automatically initiates the batch scheduler if it's not already active.
+*   **Missing Functionality:** The exported functions `queue-size` and `clear-queue` are not implemented in the provided code.
+
+## Testing
+
+The project includes a test suite for verification.
+
+*   **System:** `cl-job-queue/test`
+*   **Dependency:** `fiveam`
+
+To run the tests:
+
+```lisp
+(ql:quickload "cl-job-queue/test")
+(fiveam:run-all-tests)
+```
+```
