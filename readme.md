@@ -1,4 +1,3 @@
-```markdown
 # cl-job-queue
 
 A lightweight, thread-safe job queue implementation for Common Lisp, designed for background task processing. It supports a single worker thread that processes tasks from the queue and an optional batch scheduler for periodic operations.
