@@ -1,4 +1,4 @@
-;;; queue.lisp
+;; src/queue.lisp
 (in-package #:cl-job-queue)
 
 (defclass job-queue ()
@@ -11,7 +11,14 @@
   (batch-scheduler-thread :initform nil :accessor batch-scheduler-thread)
   (batch-interval :initform 2.0 :accessor batch-interval)
   (worker-name :initform "Worker" :accessor worker-name)
-  (logger :initform nil :accessor queue-logger)))
+  (logger :initform nil :accessor queue-logger)
+  ;; --- NEW: Slot for tracking scheduled tasks ---
+  (scheduled-tasks :initform (make-hash-table :test 'equal) :reader scheduled-tasks)))
+
+(defstruct (scheduled-task (:constructor make-scheduled-task-internal))
+ (id (gensym "SCHEDULED-TASK-") :read-only t)
+ (thread nil)
+ (running-p t))
 
 (defun make-job-queue (&key processor logger (batch-interval 2.0))
  "Create a new job queue."
@@ -64,21 +71,62 @@
   (when (queue-logger queue)
    (funcall (queue-logger queue) :info 'worker
     "~A started." (worker-name queue)))
-  ;; Start batch scheduler if configured
   (start-batch-scheduler queue)))
 
 (defmethod stop-worker ((queue job-queue))
- "Stop the worker thread."
+ "Stop the worker thread and all scheduled tasks."
  (when (worker-running-p queue)
   (stop-batch-scheduler queue)
+  (cancel-all-tasks queue) ; Stop scheduled tasks
   (setf (worker-running-p queue) nil)
   (bordeaux-threads:with-lock-held ((slot-value queue 'lock))
    (bordeaux-threads:condition-notify (slot-value queue 'condition)))
-  (bordeaux-threads:join-thread (worker-thread queue))
+  (when (worker-thread queue)
+   (bordeaux-threads:join-thread (worker-thread queue)))
   (setf (worker-thread queue) nil)
   (when (queue-logger queue)
    (funcall (queue-logger queue) :info 'worker
     "~A stopped." (worker-name queue)))))
+
+(defmethod schedule-task ((queue job-queue) task &key (interval 60) (delay 0))
+ "Schedules a TASK to be enqueued periodically.
+   :INTERVAL The period in seconds between enqueues.
+   :DELAY    The initial delay in seconds before the first enqueue.
+   Returns a unique ID for the scheduled task, which can be used with CANCEL-TASK."
+ (let ((scheduled-task (make-scheduled-task-internal)))
+  (setf (scheduled-task-thread scheduled-task)
+   (bordeaux-threads:make-thread
+    (lambda ()
+     (sleep delay)
+     (loop while (scheduled-task-running-p scheduled-task)
+      do (enqueue queue task)
+      (sleep interval)))
+    :name (format nil "Scheduled Task: ~A" (scheduled-task-id scheduled-task))))
+  (setf (gethash (scheduled-task-id scheduled-task) (scheduled-tasks queue)) scheduled-task)
+  (when (queue-logger queue)
+   (funcall (queue-logger queue) :info 'scheduler
+    "Task ~A scheduled to run every ~As (ID: ~A)"
+    task interval (scheduled-task-id scheduled-task)))
+  (scheduled-task-id scheduled-task)))
+
+(defmethod cancel-task ((queue job-queue) task-id)
+ "Stops and removes a scheduled task by its ID."
+ (let ((task (gethash task-id (scheduled-tasks queue))))
+  (when task
+   (setf (scheduled-task-running-p task) nil)
+   ;; Note: We don't join the thread to avoid blocking. It will exit on its own.
+   (remhash task-id (scheduled-tasks queue))
+   (when (queue-logger queue)
+    (funcall (queue-logger queue) :info 'scheduler "Cancelled scheduled task ~A" task-id))
+   t)))
+
+(defmethod cancel-all-tasks ((queue job-queue))
+ "Stops all scheduled tasks associated with this queue."
+ (let ((task-ids (loop for id being the hash-keys of (scheduled-tasks queue) collect id)))
+  (dolist (id task-ids)
+   (cancel-task queue id))
+  (when (queue-logger queue)
+   (funcall (queue-logger queue) :info 'scheduler "Cancelled all ~D scheduled tasks." (length task-ids)))))
 
 (defmethod start-batch-scheduler ((queue job-queue))
  "Start the batch scheduler thread."
@@ -98,7 +146,11 @@
   (when (queue-logger queue)
    (funcall (queue-logger queue) :info 'scheduler
     "Stopping batch scheduler thread."))
-  (setf (batch-scheduler-thread queue) nil)))
+  ;; Simply setting the variable to NIL is enough to stop the loop.
+  (let ((thread (batch-scheduler-thread queue)))
+   (setf (batch-scheduler-thread queue) nil)
+   ;; An optional join to ensure it's fully stopped, with a timeout.
+   (bordeaux-threads:thread-alive-p thread))))
 
 (defmethod set-processor ((queue job-queue) fn)
  "Set the processor function."

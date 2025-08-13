@@ -21,6 +21,11 @@
   #:start-batch-scheduler
   #:stop-batch-scheduler
 
+  ;; Generic Task Scheduling ---
+  #:schedule-task
+  #:cancel-task
+  #:cancel-all-tasks
+
   ;; Configuration
   #:set-processor
   #:set-batch-interval
