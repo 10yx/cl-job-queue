@@ -1,5 +1,5 @@
 (asdf:defsystem "cl-job-queue"
- :version "0.1.0"
+ :version "0.2.0"
  :author "ryuei sasaki"
  :license ""
  :depends-on ("bordeaux-threads"
